@@ -130,7 +130,7 @@ def main() -> None:
         print("PERINGATAN: tidak ada cookie bernama *SESSION* di dalamnya.")
         print("Kemungkinan kamu meng-copy request yang salah — coba request ke")
         print("console-api.sinarcloud.com (bukan ke console.sinarcloud.com).")
-    print("\nTes sekarang:\n  " + os.path.join(os.path.dirname(os.path.abspath(__file__)), "sinar.py") + " --check")
+    print("\nTes sekarang:\n  " + os.path.join(os.path.dirname(os.path.abspath(__file__)), "sc-api") + " check")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""sc-api CLI — read-only SinarCloud usage, credits and balance.
+
+Thin wrapper: argument parsing and text output only. All behaviour lives in
+`scapi/` so it can be imported by a dashboard, a bot, or a cron script.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+
+from scapi import __version__
+from scapi.auth import CookieError, load_cookie
+from scapi.client import ApiError, AuthError, Client
+from scapi.notify import load_config, notify_all
+from scapi.report import build_snapshot, format_daily, format_models, format_summary
+from scapi.watch import WatchConfig, run as run_watch
+
+
+def _client(args) -> Client:
+    try:
+        jar = load_cookie(getattr(args, "cookie", None))
+    except CookieError as exc:
+        sys.exit(str(exc))
+    if jar.warning:
+        print(f"WARNING: {jar.warning}\n", file=sys.stderr)
+    return Client(jar)
+
+
+def cmd_summary(args) -> int:
+    client = _client(args)
+    try:
+        snap = build_snapshot(client, days=args.days)
+    except AuthError as exc:
+        sys.exit(str(exc))
+    except ApiError as exc:
+        sys.exit(str(exc))
+
+    if args.json:
+        print(json.dumps(snap.raw | {"summary": snap.__dict__ | {"raw": None}}, default=str, indent=2))
+        return 0
+    print(format_summary(snap, low_runway=args.runway))
+    return 0
+
+
+def cmd_daily(args) -> int:
+    client = _client(args)
+    print(format_daily(build_snapshot(client, days=args.days, with_credits=False)))
+    return 0
+
+
+def cmd_models(args) -> int:
+    client = _client(args)
+    print(format_models(build_snapshot(client, days=args.days, with_credits=False)))
+    return 0
+
+
+def cmd_check(args) -> int:
+    client = _client(args)
+    me = client.me()
+    org = (me.get("organization") or {}).get("role", "?")
+    print(
+        f"OK — {me.get('email')} ({me.get('displayName')}) "
+        f"· role={org} · tz={me.get('timeZone')}"
+    )
+    return 0
+
+
+def cmd_notify_test(args) -> int:
+    """Send one reminder with the current numbers, ignoring thresholds."""
+    client = _client(args)
+    snap = build_snapshot(client, days=args.days, with_credits=False)
+    cfg = load_config(getattr(args, "notify_config", None))
+    results = notify_all(
+        balance=snap.balance,
+        currency=snap.currency,
+        threshold=args.balance or 0,
+        runway_days=snap.runway_days,
+        average_daily=snap.forecast.average_daily.amount,
+        severity="info",
+        config=cfg,
+    )
+    ok_any = False
+    for channel, (ok, detail) in results.items():
+        print(f"{channel:<9} {'OK' if ok else 'FAIL':<5} {detail[:120]}")
+        ok_any = ok_any or ok
+    return 0 if ok_any else 1
+
+
+def cmd_watch(args) -> int:
+    client = _client(args)
+    if args.balance is None and args.runway is None:
+        sys.exit(
+            "watch needs at least one threshold: --balance <amount> and/or --runway <days>\n"
+            "example: sc-api watch --balance 25000 --runway 3 --interval 300 --notify"
+        )
+    cfg = WatchConfig(
+        interval=args.interval,
+        balance_threshold=args.balance,
+        runway_threshold=args.runway,
+        days=args.days,
+        notify=args.notify,
+        once=args.once,
+        as_json=args.json,
+        quiet=args.quiet,
+        max_ticks=args.ticks,
+        state_path=args.state or WatchConfig().state_path,
+    )
+    return run_watch(client, cfg)
+
+
+# ---------------------------------------------------------------------------
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="sc-api",
+        description="Read-only SinarCloud usage, credits and balance (cookie session).",
+        epilog="Setup: ./import_cookie.py then ./sc-api check",
+    )
+    ap.add_argument("--version", action="version", version=f"sc-api {__version__}")
+    ap.add_argument("--cookie", metavar="PATH", help="cookie file (default ~/.config/sinarcloud/cookies.txt)")
+    ap.add_argument("--days", type=int, default=30, choices=[7, 30], help="reporting window (default 30)")
+    ap.add_argument("--runway", type=float, metavar="DAYS", help="warn in the summary when runway is below DAYS")
+
+    sub = ap.add_subparsers(dest="command")
+
+    p = sub.add_parser("summary", help="balance, runway, usage, credits (default)")
+    p.add_argument("--json", action="store_true", help="raw JSON payload instead of text")
+    p.set_defaults(func=cmd_summary)
+
+    p = sub.add_parser("daily", help="per-day requests and tokens")
+    p.set_defaults(func=cmd_daily)
+
+    p = sub.add_parser("models", help="per-model spend")
+    p.set_defaults(func=cmd_models)
+
+    p = sub.add_parser("check", help="verify the cookie session")
+    p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser("watch", help="refresh on an interval and fire reminders")
+    p.add_argument("--interval", type=float, default=60, metavar="SEC", help="seconds between refreshes (default 60)")
+    p.add_argument("--balance", type=float, metavar="AMOUNT", help="remind when balance drops below AMOUNT")
+    p.add_argument("--runway", type=float, metavar="DAYS", help="remind when runway drops below DAYS")
+    p.add_argument("--notify", action="store_true", help="actually send Discord/Telegram reminders")
+    p.add_argument("--once", action="store_true", help="single evaluation (use this in cron)")
+    p.add_argument("--json", action="store_true", help="emit one JSON object per tick")
+    p.add_argument("--quiet", action="store_true", help="no terminal output; notifications only")
+    p.add_argument("--ticks", type=int, default=0, metavar="N", help="stop after N ticks (0 = forever)")
+    p.add_argument("--state", metavar="PATH", help="reminder state file (default ~/.local/state/sinarcloud/state.json)")
+    p.set_defaults(func=cmd_watch)
+
+    p = sub.add_parser("notify-test", help="send one reminder now, ignoring thresholds")
+    p.add_argument("--balance", type=float, default=0, metavar="AMOUNT", help="value to show as the threshold")
+    p.add_argument("--notify-config", metavar="PATH", help="path to notify.json")
+    p.set_defaults(func=cmd_notify_test)
+
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = build_parser()
+    args = ap.parse_args(argv)
+    if not getattr(args, "command", None):
+        args.command = "summary"
+        args.json = False
+        args.func = cmd_summary
+    try:
+        return args.func(args)
+    except ApiError as exc:
+        sys.exit(str(exc))
+    except KeyboardInterrupt:
+        print()
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
