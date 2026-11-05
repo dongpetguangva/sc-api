@@ -65,11 +65,61 @@ is never sent anywhere except `console-api.sinarcloud.com`.
 | `./sc-api daily` | Per-day requests and tokens |
 | `./sc-api models` | Spend per model |
 | `./sc-api check` | Verify the cookie still works |
+| `./sc-api config get` | Show saved settings (secrets masked) |
+| `./sc-api config set KEY VALUE` | Change one setting |
+| `./sc-api cron install --every N` | Install/change the cron reminder |
+| `./sc-api cron status` | Show schedule and last run |
+| `./sc-api cron remove` | Delete the cron reminder |
 | `./sc-api setup` | Connect Discord/Telegram: detect, test, save |
 | `./sc-api watch …` | Refresh on an interval; fire reminders |
 | `./sc-api notify-test` | Send one reminder now, ignoring thresholds |
 
 Global options: `--days {7,30}`, `--cookie PATH`, `--runway DAYS`, `--version`.
+
+### Everything is a command — no file editing
+
+Configuration lives in `~/.config/sinarcloud/notify.json`, but you never have to
+open it:
+
+```bash
+./sc-api config set threshold 14000     # alert below IDR 14,000
+./sc-api config set channel uptime      # Discord channel by name
+./sc-api config set runway 3            # also alert below 3 days of runway
+./sc-api config get                     # show everything, secrets masked
+./sc-api config get threshold           # show one key
+./sc-api config set runway ""           # clear a setting
+```
+
+`config set` rejects unknown keys and lists the valid ones. Numbers are stored
+as numbers, so a threshold of `"14000"` compares correctly. Known keys:
+
+| Key | Meaning |
+|---|---|
+| `threshold` | Balance below which a reminder fires |
+| `runway` | Runway in days below which a reminder fires |
+| `channel` | Discord channel name or id |
+| `discord_bot_token`, `discord_channel_id`, `discord_dm_user_id` | Discord bot transport |
+| `discord_webhook` | Discord webhook transport (alternative to a bot) |
+| `telegram_bot_token`, `telegram_chat_id` | Telegram transport |
+
+### The cron reminder is a command too
+
+```bash
+./sc-api cron install --every 5     # check every 5 minutes
+./sc-api cron install --every 15    # change it to 15
+./sc-api cron status                # schedule + when it last ran
+./sc-api cron remove                # stop the reminders
+```
+
+`install` writes one tagged line into your crontab and replaces it on every run,
+so changing the interval never leaves duplicates behind. No sudo, no systemd.
+`--every` must divide 60 evenly (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30) — anything
+else would drift, so it is refused rather than approximated.
+
+`cron status` reports the last completed run, because each tick writes a
+timestamp to `~/.local/state/sinarcloud/last-run`. That is a timestamp only —
+never a balance — and it is how you tell "nothing to report" apart from
+"the job is dead".
 
 ---
 
@@ -242,11 +292,17 @@ Telegram through `sendMessage`. A target with no credential is reported as
 ### Cron examples
 
 ```bash
-# every 30 minutes: evaluate once, speak only on a breach
-*/30 * * * * cd ~/sc-api && ./sc-api watch --balance 500 --channel uptime --once --notify --quiet
+# install once, then change the interval any time with one command
+./sc-api cron install --every 5
+./sc-api cron status
+```
 
-# daily at 07:00: append a summary to a log
-0 7 * * * cd ~/sc-api && ./sc-api >> ~/.local/state/sinar-usage.log 2>&1
+Under the hood that is a single tagged line, which you can also see in
+`crontab -l`:
+
+```cron
+# sc-api: reminder
+*/5 * * * * cd ~/sc-api && ./sc-api watch --once --notify --quiet >/dev/null 2>&1
 ```
 
 ### Testing without real credentials
@@ -332,6 +388,7 @@ scapi/
   report.py            build Snapshot, render summary/daily/models
   notify.py            Discord webhook/bot + Telegram, retry, fan-out
   setup.py             discover credentials, verify, write notify.json
+  cron.py              install/remove the tagged crontab entry
   watch.py             interval loop, threshold evaluation, dedupe state
 import_cookie.py       extract Cookie header from bash/macOS/Windows cURL
 tests/test_notify.py   offline assertions on payloads and thresholds

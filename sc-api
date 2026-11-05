@@ -69,6 +69,39 @@ def cmd_check(args) -> int:
     return 0
 
 
+def cmd_cron(args) -> int:
+    """Install, change, inspect or remove the cron reminder entry."""
+    from scapi import cron as cron_mod
+
+    workdir = os.path.dirname(os.path.abspath(__file__))
+
+    if args.action == "install":
+        try:
+            line = cron_mod.install(args.every, workdir)
+        except (RuntimeError, ValueError) as exc:
+            sys.exit(str(exc))
+        print(f"installed: every {args.every} min")
+        print(f"  {line}")
+        return 0
+
+    if args.action == "remove":
+        removed = cron_mod.remove()
+        print("removed sc-api reminder" if removed else "no sc-api reminder was installed")
+        return 0 if removed else 1
+
+    # status / default
+    text = cron_mod.read_crontab()
+    block = cron_mod.managed_lines(text)
+    if not block:
+        print("not installed. Install with: sc-api cron install --every 5")
+        return 1
+    every = cron_mod.parse_interval(text)
+    print(f"installed : every {every} min" if every else "installed")
+    print(f"schedule  : {block[1]}")
+    print(f"last run  : {cron_mod.last_run() or 'never'}")
+    return 0
+
+
 def cmd_config(args) -> int:
     """Read or change settings in notify.json without editing the file."""
     from scapi.notify import CONFIG_PATH
@@ -98,15 +131,30 @@ def cmd_config(args) -> int:
     if not args.key:
         sys.exit("config set needs a key and a value: sc-api config set threshold 14000")
 
+    valid = {
+        "threshold", "runway", "channel",
+        "discord_webhook", "discord_bot_token", "discord_channel_id", "discord_dm_user_id",
+        "telegram_bot_token", "telegram_chat_id",
+    }
+    if args.key not in valid:
+        sys.exit(
+            f"unknown setting {args.key!r}.\nValid settings:\n  "
+            + "\n  ".join(sorted(valid))
+        )
+
     raw = args.value
     value: object = raw
-    # Keep numbers numeric: a threshold written as "14000" must compare as a float.
-    try:
-        value = float(raw) if "." in raw else int(raw)
-    except ValueError:
-        value = raw
-
-    cfg[args.key] = value
+    # An empty value clears the setting instead of storing "".
+    if raw == "":
+        cfg.pop(args.key, None)
+        value = None
+    else:
+        # Keep numbers numeric: a threshold written as "14000" must compare as a float.
+        try:
+            value = float(raw) if "." in raw else int(raw)
+        except ValueError:
+            value = raw
+        cfg[args.key] = value
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(cfg, fh, indent=2)
@@ -258,6 +306,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ticks", type=int, default=0, metavar="N", help="stop after N ticks (0 = forever)")
     p.add_argument("--state", metavar="PATH", help="reminder state file (default ~/.local/state/sinarcloud/state.json)")
     p.set_defaults(func=cmd_watch)
+
+    p = sub.add_parser("cron", help="install or change the cron reminder (no sudo needed)")
+    cron_sub = p.add_subparsers(dest="action")
+    ci = cron_sub.add_parser("install", help="install or replace the cron entry")
+    ci.add_argument("--every", type=int, default=10, metavar="MIN", help="minutes between checks (default 10)")
+    ci.set_defaults(func=cmd_cron)
+    cron_sub.add_parser("status", help="show the installed schedule and last run").set_defaults(func=cmd_cron)
+    cron_sub.add_parser("remove", help="delete the cron entry").set_defaults(func=cmd_cron)
+    p.set_defaults(func=cmd_cron, action="status", every=10)
 
     p = sub.add_parser("config", help="read or change saved settings (threshold, channel, ...)")
     cfg_sub = p.add_subparsers(dest="action", required=True)

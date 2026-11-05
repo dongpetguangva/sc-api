@@ -25,6 +25,21 @@ from .notify import load_config, notify_all
 from .report import build_snapshot, format_summary
 
 DEFAULT_STATE = os.path.expanduser("~/.local/state/sinarcloud/state.json")
+DEFAULT_STAMP = os.path.expanduser("~/.local/state/sinarcloud/last-run")
+
+
+def _stamp_run() -> None:
+    """Record that a tick completed. A timestamp only — never a balance.
+
+    This is what makes `sc-api cron status` able to answer "did cron fire?"
+    without the job having to print anything.
+    """
+    try:
+        os.makedirs(os.path.dirname(DEFAULT_STAMP), exist_ok=True)
+        with open(DEFAULT_STAMP, "w", encoding="utf-8") as fh:
+            fh.write(time.strftime("%Y-%m-%d %H:%M:%S") + "\n")
+    except OSError:
+        pass
 
 
 @dataclass
@@ -181,6 +196,7 @@ def run(client: Client, cfg: WatchConfig) -> int:
             state.save(cfg.state_path)
 
         if cfg.once or (cfg.max_ticks and tick >= cfg.max_ticks):
+            _stamp_run()
             return 0
         time.sleep(max(1.0, cfg.interval))
 
