@@ -103,17 +103,17 @@ def main() -> None:
             sys.exit(f"file not found: {arg}")
         raw = open(arg, encoding="utf-8", errors="replace").read()
     else:
-        print("Paste hasil 'Copy as cURL' di bawah, lalu tekan Enter dan Ctrl-D:", flush=True)
+        print("Paste the 'Copy as cURL' output below, then press Enter and Ctrl-D:", flush=True)
         raw = sys.stdin.read()
 
     if not raw.strip():
-        sys.exit("input kosong")
+        sys.exit("empty input")
 
     cookie = find_cookie(normalize(raw))
     if not cookie:
         sys.exit(
-            "tidak menemukan header Cookie / -b di input itu.\n"
-            "Pastikan yang di-copy adalah request ke console-api.sinarcloud.com."
+            "could not find a Cookie header / -b flag in that input.\n"
+            "Make sure you copied a request to console-api.sinarcloud.com."
         )
 
     os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
@@ -125,12 +125,12 @@ def main() -> None:
     names = [c.split("=", 1)[0].strip() for c in cookie.split(";") if "=" in c]
     has_session = any("session" in n.lower() for n in names)
 
-    print(f"OK — {count} cookie disimpan ke {dest}")
+    print(f"OK — {count} cookie(s) written to {dest}")
     if not has_session:
-        print("PERINGATAN: tidak ada cookie bernama *SESSION* di dalamnya.")
-        print("Kemungkinan kamu meng-copy request yang salah — coba request ke")
-        print("console-api.sinarcloud.com (bukan ke console.sinarcloud.com).")
-    print("\nTes sekarang:\n  " + os.path.join(os.path.dirname(os.path.abspath(__file__)), "sc-api") + " check")
+        print("WARNING: no cookie named *SESSION* was found in that jar.")
+        print("You probably copied the wrong request — try one to")
+        print("console-api.sinarcloud.com (not console.sinarcloud.com).")
+    print("\nTest it now:\n  " + os.path.join(os.path.dirname(os.path.abspath(__file__)), "sc-api") + " check")
 
 
 if __name__ == "__main__":

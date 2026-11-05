@@ -1,7 +1,7 @@
 # sc-api — monitor your SinarCloud balance without opening the dashboard
 
-Read-only client for `console.sinarcloud.com`. Every request is a `GET`; nothing
-in this project writes, mutates, or deletes anything on your account.
+A read-only client for the SinarCloud console. Every request it makes is a
+`GET`; nothing here writes, mutates, or deletes anything on your account.
 
 It exists because SinarCloud exposes no billing endpoint for API keys. The only
 credential the console API accepts is a **browser session cookie**.
@@ -9,18 +9,20 @@ credential the console API accepts is a **browser session cookie**.
 ```
 $ ./sc-api
 
-Saldo          : IDR 17,714
-Rata-rata/hari : IDR 3,277
-Bulan berjalan : IDR 18,996
-Proyeksi bulan : IDR 101,335
-Sisa bertahan : 5.4 hari
+Balance        : IDR 42,000
+Average/day    : IDR 1,250
+Month to date  : IDR 12,500
+Projected month: IDR 38,750
+Runway         : 33.6 days
 
-Request        : 6,765
-Token          : masuk 918,702,063 / keluar 4,958,973
-Total terpakai : IDR 52,307
+Requests       : 1,204
+Tokens         : in 12,345,678 / out 234,567
+Total charged  : IDR 12,500
 
-Token credits  : tidak ada
+Token credits  : none
 ```
+
+*(Sample output. Your own numbers appear when you run it.)*
 
 ---
 
@@ -39,7 +41,7 @@ cd sc-api
 
 ### Getting the cookie (once per session)
 
-1. Log in at <https://console.sinarcloud.com>
+1. Log in at `https://console.sinarcloud.com`
 2. Press **F12** → **Network** tab
 3. Reload the page (**F5**)
 4. Click any request to `console-api.sinarcloud.com` — usually `csrf` or `me`
@@ -49,8 +51,8 @@ cd sc-api
 All three cURL flavours work: bash/Linux (`-b '...'`), macOS, and Windows `cmd`
 (the one full of `^"` and `^%^22`).
 
-The cookie is stored at `~/.config/sinarcloud/cookies.txt` with mode `600`.
-It is never sent anywhere except `console-api.sinarcloud.com`.
+The cookie is written to `~/.config/sinarcloud/cookies.txt` with mode `600`. It
+is never sent anywhere except `console-api.sinarcloud.com`.
 
 ---
 
@@ -64,7 +66,7 @@ It is never sent anywhere except `console-api.sinarcloud.com`.
 | `./sc-api models` | Spend per model |
 | `./sc-api check` | Verify the cookie still works |
 | `./sc-api watch …` | Refresh on an interval; fire reminders |
-| `./sc-api notify-test` | Send one reminder now, ignore thresholds |
+| `./sc-api notify-test` | Send one reminder now, ignoring thresholds |
 
 Global options: `--days {7,30}`, `--cookie PATH`, `--runway DAYS`, `--version`.
 
@@ -72,9 +74,9 @@ Global options: `--days {7,30}`, `--cookie PATH`, `--runway DAYS`, `--version`.
 
 ## Watch mode
 
-`watch` refreshes on an interval and sends a reminder when balance or runway
-crosses a threshold you set. It is **not** a daemon that must stay running —
-`--once` makes it a single evaluation for cron.
+`watch` refreshes on an interval and sends a reminder when the balance or the
+projected runway crosses a threshold you set. It is **not** a daemon that has to
+stay running — `--once` turns it into a single evaluation for cron.
 
 ```bash
 # live terminal view, refresh every 5 minutes, alert under IDR 25,000
@@ -83,18 +85,18 @@ crosses a threshold you set. It is **not** a daemon that must stay running —
 # headless: check once, notify if below threshold, exit (cron-friendly)
 ./sc-api watch --balance 25000 --once --notify --quiet
 
-# JSON per tick — for a dashboard or another script
+# one JSON object per tick — for a dashboard or another script
 ./sc-api watch --runway 3 --interval 60 --json
 
-# just look, never send anything
+# observe only, never send anything
 ./sc-api watch --balance 25000 --interval 30
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--interval SEC` | Seconds between refreshes (default `60`) |
-| `--balance AMOUNT` | Breach when balance `< AMOUNT` |
-| `--runway DAYS` | Breach when projected runway `< DAYS` |
+| `--balance AMOUNT` | Breach when balance is below `AMOUNT` |
+| `--runway DAYS` | Breach when projected runway is below `DAYS` |
 | `--notify` | Actually send to Discord/Telegram (off by default) |
 | `--once` | One evaluation, then exit |
 | `--json` | One JSON object per tick |
@@ -107,14 +109,14 @@ crosses a threshold you set. It is **not** a daemon that must stay running —
 State is kept in `~/.local/state/sinarcloud/state.json`. A breach is announced
 once when it appears, and again only if it **escalates** (warning → critical at
 half the threshold). When the balance recovers, the flag clears. Without this a
-5-second interval would post 12 times a minute.
+5-second interval would post an alert twelve times a minute.
 
 ---
 
 ## Reminders: Discord and Telegram (no LLM)
 
-Two plain HTTP transports. Credentials come from the environment first, then
-`~/.config/sinarcloud/notify.json`:
+Two plain HTTP transports. Credentials are read from the environment first, then
+from `~/.config/sinarcloud/notify.json`:
 
 ```json
 {
@@ -132,10 +134,10 @@ chmod 600 ~/.config/sinarcloud/notify.json
 Environment variables override the file:
 `SINAR_DISCORD_WEBHOOK`, `SINAR_TELEGRAM_BOT_TOKEN`, `SINAR_TELEGRAM_CHAT_ID`.
 
-**Discord** sends a rich embed (title, colour by severity, balance, threshold,
-runway, average daily spend, top-up link). **Telegram** sends HTML text via
-`sendMessage`. A channel with no credential is reported as `skipped`, so a
-Telegram-only setup does not look broken.
+**Discord** receives a rich embed: title, colour by severity, balance, threshold,
+runway, average daily spend, and a top-up link. **Telegram** receives HTML text
+through `sendMessage`. A channel with no credential is reported as `skipped`, so
+a Telegram-only setup does not look broken.
 
 ### Cron examples
 
@@ -143,20 +145,47 @@ Telegram-only setup does not look broken.
 # every 30 minutes: evaluate once, speak only on a breach
 */30 * * * * cd ~/sc-api && ./sc-api watch --balance 25000 --once --notify --quiet
 
-# daily 07:00: append a summary to a log
+# daily at 07:00: append a summary to a log
 0 7 * * * cd ~/sc-api && ./sc-api >> ~/.local/state/sinar-usage.log 2>&1
 ```
 
 ### Testing without real credentials
 
-`tests/mock_server.py` accepts any POST and records it, so the reminder path can
-be verified end to end:
+`tests/mock_server.py` accepts any POST and records it, so the whole reminder
+path can be verified offline:
 
 ```bash
 ./tests/mock_server.py 8765 &
 SINAR_DISCORD_WEBHOOK="http://127.0.0.1:8765/discord" ./sc-api notify-test
 cat /tmp/scapi-mock.jsonl
 ```
+
+---
+
+## Security and privacy
+
+What this project stores, and where:
+
+| Data | Location | Protection |
+|---|---|---|
+| Session cookie | `~/.config/sinarcloud/cookies.txt` | `chmod 600`, outside the repo |
+| Webhook / bot token | `~/.config/sinarcloud/notify.json` | `chmod 600`, outside the repo |
+| Reminder state | `~/.local/state/sinarcloud/state.json` | timestamps only, no amounts |
+| Everything else | memory | nothing is logged or cached to disk |
+
+Rules the code follows:
+
+- **Read-only by construction.** `scapi.client` has no generic `post()` method,
+  so no code path can modify your account.
+- **Credentials never enter the repository.** `.gitignore` covers
+  `cookies.txt`, `*.cookie`, `.env`, and `notify.json`.
+- **The cookie is a full account credential** — treat it like a password. If it
+  leaks, log out of the console (which invalidates the session) and import a
+  fresh one.
+- **Nothing is sent anywhere** except `console-api.sinarcloud.com` for reads, and
+  the Discord/Telegram endpoints you explicitly configure.
+- **`--json` prints raw API payloads**, which include your email and balance.
+  Do not paste that output into an issue.
 
 ---
 
@@ -210,6 +239,7 @@ from scapi.report import build_snapshot
 client = Client(load_cookie())
 snap = build_snapshot(client, days=30)
 print(snap.balance, snap.runway_days, snap.currency)
+
 if snap.below_runway(3):
     ...  # your own alerting
 ```
@@ -226,7 +256,7 @@ non-GET (this client sends no non-GET requests).
 |---|---|
 | `GET /api/auth/bff/me` | identity, organisation, timezone |
 | `GET /api/wallet/current` | `availableBalance`, `reservedBalance`, `currency` |
-| `GET /api/ai/usage/overview` | totals + `daily[]` (requests/tokens only) |
+| `GET /api/ai/usage/overview` | totals + `daily[]` (requests and tokens only) |
 | `GET /api/ai/usage/dashboard?days=7\|30` | `totals`, `daily[]`, `apiKeys[]`, `recentRequests[]` |
 | `GET /api/ai/usage/reports?days=7\|30` | `forecast`, `modelPerformance[]`, `spending`, `promotionSavings` |
 | `GET /api/ai/credits/grants?page=&size=` | token credit grants |
@@ -244,29 +274,18 @@ Shape notes:
 
 ---
 
-## Limits & etiquette
-
-- Read-only by construction: there is no generic POST surface in `scapi.client`.
-- The cookie is a full account credential — never commit it, never share it.
-  `.gitignore` covers `cookies.txt`, `*.cookie`, `.env`, and `notify.json`.
-- If several people use this, each uses **their own** cookie. Never share one.
-- Unofficial client. Endpoints can change without notice; `--json` is the
-  fastest way to inspect the new shape.
-
----
-
 ## Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
 | `cookie file not found` | `import_cookie.py` was never run. |
-| `WARNING: … none look like a session cookie` | Copied from `console.sinarcloud.com` instead of `console-api.sinarcloud.com`. Redo step 4. |
+| `WARNING: no cookie named *SESSION*` | Copied from `console.sinarcloud.com` instead of `console-api.sinarcloud.com`. Redo step 4. |
 | `HTTP 401 — session cookie missing or expired` | Session gone. Log in, re-import. |
-| `Token credits: tidak ada` | The account has no active grants. Not an error. |
+| `Token credits: none` | The account has no active grants. Not an error. |
 | `daily` has no cost column | Normal — the API reports no per-day money. |
 | Discord `FAIL HTTP 404` | Webhook URL is wrong or revoked. |
 | Telegram `FAIL HTTP 401` | Bot token invalid, or the bot was never added to the chat. |
-| Reminder never fires | Check `--notify` is passed; delete `~/.local/state/sinarcloud/state.json` if a stale breach flag is stuck. |
+| Reminder never fires | Check that `--notify` is passed; delete `~/.local/state/sinarcloud/state.json` if a stale breach flag is stuck. |
 
 ---
 

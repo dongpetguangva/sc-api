@@ -1,16 +1,23 @@
-# kredensial — jangan pernah di-commit
+# Credentials — never commit these
 cookies.txt
 *.cookie
+notify.json
 .env
 .env.*
 
-# python
+# Logs and local state
+*.log
+state.json
+/tmp/
+
+# Python
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+.pytest_cache/
 
-# editor / os
+# Editor / OS
 .DS_Store
 .vscode/
 .idea/
