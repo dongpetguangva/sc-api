@@ -51,6 +51,9 @@ def load_config(path: str | None = None) -> dict:
         "discord_dm_user_id": os.environ.get("SINAR_DISCORD_DM_USER_ID") or cfg.get("discord_dm_user_id"),
         "telegram_bot_token": os.environ.get("SINAR_TELEGRAM_BOT_TOKEN") or cfg.get("telegram_bot_token"),
         "telegram_chat_id": os.environ.get("SINAR_TELEGRAM_CHAT_ID") or cfg.get("telegram_chat_id"),
+        # Defaults used when the CLI is not given explicit flags.
+        "threshold": cfg.get("threshold"),
+        "channel": cfg.get("channel"),
     }
 
 
