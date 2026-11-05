@@ -126,6 +126,19 @@ from `~/.config/sinarcloud/notify.json`:
 }
 ```
 
+Discord accepts either a **webhook URL** or a **bot token plus channel id** —
+useful when a bot is already in your server and you would rather not create a
+webhook:
+
+```json
+{
+  "discord_bot_token": "MTU1...",
+  "discord_channel_id": "123456789012345678"
+}
+```
+
+The webhook wins if both are present.
+
 ```bash
 chmod 600 ~/.config/sinarcloud/notify.json
 ./sc-api notify-test          # prove both channels work
@@ -151,13 +164,20 @@ a Telegram-only setup does not look broken.
 
 ### Testing without real credentials
 
-`tests/mock_server.py` accepts any POST and records it, so the whole reminder
-path can be verified offline:
+Three layers, cheapest first:
 
 ```bash
-./tests/mock_server.py 8765 &
+python3 tests/test_notify.py     # payload shape, colours, escaping, config — offline
+./tests/mock_server.py 8765 &    # accepts any POST, records it to /tmp/scapi-mock.jsonl
 SINAR_DISCORD_WEBHOOK="http://127.0.0.1:8765/discord" ./sc-api notify-test
 cat /tmp/scapi-mock.jsonl
+```
+
+The third layer is the only one that proves a real delivery, and it needs real
+credentials:
+
+```bash
+./sc-api notify-test    # hits discord.com / api.telegram.org for real
 ```
 
 ---

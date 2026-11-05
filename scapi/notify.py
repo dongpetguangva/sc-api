@@ -44,16 +44,20 @@ def load_config(path: str | None = None) -> dict:
     # Environment overrides the file, so CI/cron can inject secrets.
     return {
         "discord_webhook": os.environ.get("SINAR_DISCORD_WEBHOOK") or cfg.get("discord_webhook"),
+        "discord_bot_token": os.environ.get("SINAR_DISCORD_BOT_TOKEN") or cfg.get("discord_bot_token"),
+        "discord_channel_id": os.environ.get("SINAR_DISCORD_CHANNEL_ID") or cfg.get("discord_channel_id"),
         "telegram_bot_token": os.environ.get("SINAR_TELEGRAM_BOT_TOKEN") or cfg.get("telegram_bot_token"),
         "telegram_chat_id": os.environ.get("SINAR_TELEGRAM_CHAT_ID") or cfg.get("telegram_chat_id"),
     }
 
 
-def _post(url: str, payload: dict) -> tuple[bool, str]:
+def _post(url: str, payload: dict, headers: dict | None = None) -> tuple[bool, str]:
     data = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
     req.add_header("User-Agent", "sc-api/1.0")
+    for key, value in (headers or {}).items():
+        req.add_header(key, value)
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             body = resp.read().decode(errors="replace")
@@ -140,6 +144,16 @@ def build_telegram_text(
     return "\n".join(lines)
 
 
+def send_discord_bot(bot_token: str, channel_id: str, embed_payload: dict) -> tuple[bool, str]:
+    """Post through the Discord Bot API (needs a bot token, no webhook).
+
+    Use this when the bot is already in the guild: it delivers to the channel id
+    directly and does not require creating a webhook.
+    """
+    url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+    return _post(url, embed_payload, headers={"Authorization": f"Bot {bot_token}"})
+
+
 def send_telegram(bot_token: str, chat_id: str, text: str) -> tuple[bool, str]:
     base = os.environ.get("SINAR_TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
     url = f"{base}/bot{bot_token}/sendMessage"
@@ -175,18 +189,26 @@ def notify_all(
     cfg = config if config is not None else load_config()
     results: dict[str, tuple[bool, str]] = {}
 
+    embed = build_discord_embed(
+        balance=balance,
+        currency=currency,
+        threshold=threshold,
+        runway_days=runway_days,
+        average_daily=average_daily,
+        severity=severity,
+    )
+
+    # Webhook and bot token are interchangeable transports: prefer whichever
+    # is configured. A webhook needs no bot in the guild; a bot token needs no
+    # webhook to be created by hand.
     if cfg.get("discord_webhook"):
-        embed = build_discord_embed(
-            balance=balance,
-            currency=currency,
-            threshold=threshold,
-            runway_days=runway_days,
-            average_daily=average_daily,
-            severity=severity,
-        )
         results["discord"] = send_discord(cfg["discord_webhook"], embed)
+    elif cfg.get("discord_bot_token") and cfg.get("discord_channel_id"):
+        results["discord"] = send_discord_bot(
+            cfg["discord_bot_token"], cfg["discord_channel_id"], embed
+        )
     else:
-        results["discord"] = (False, "skipped: no discord_webhook configured")
+        results["discord"] = (False, "skipped: no discord_webhook or discord_bot_token+channel_id")
 
     if cfg.get("telegram_bot_token") and cfg.get("telegram_chat_id"):
         text = build_telegram_text(
