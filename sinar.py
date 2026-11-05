@@ -60,7 +60,7 @@ def load_cookies(path: str) -> tuple[str, bool]:
             "One-time setup:\n"
             "  1. log in at https://console.sinarcloud.com\n"
             "  2. DevTools -> Network -> any console-api request -> Copy as cURL\n"
-            "  3. ./import-curl.sh   (paste, Enter, Ctrl-D)\n"
+            "  3. ./import_cookie.py   (paste, Enter, Ctrl-D)\n"
         )
     raw = open(path, encoding="utf-8").read().strip()
     if not raw:
