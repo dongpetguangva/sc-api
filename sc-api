@@ -68,6 +68,61 @@ def cmd_check(args) -> int:
     return 0
 
 
+def cmd_setup(args) -> int:
+    """Find or ask for channel credentials, prove they work, save them."""
+    from scapi import setup as setup_mod
+
+    print("sc-api channel setup\n")
+    cfg: dict = {}
+
+    if args.detect:
+        found = setup_mod.discover()
+        if not found["found"]:
+            print("No existing credentials found on this machine.")
+            print("Run `sc-api setup` without --detect to enter them by hand.")
+            return 1
+        print("Found credentials already on this machine:")
+        for line in setup_mod.describe(found["found"], found["sources"]):
+            print(line)
+        print()
+        cfg = found["found"]
+    else:
+        print("Leave a field blank to skip it. Nothing is sent until you say so.\n")
+        cfg["discord_webhook"] = setup_mod.ask("Discord webhook URL")
+        if not cfg.get("discord_webhook"):
+            cfg["discord_bot_token"] = setup_mod.ask("Discord bot token")
+            if cfg.get("discord_bot_token"):
+                cfg["discord_channel_id"] = setup_mod.ask("Discord channel id")
+        cfg["telegram_bot_token"] = setup_mod.ask("Telegram bot token")
+        if cfg.get("telegram_bot_token"):
+            cfg["telegram_chat_id"] = setup_mod.ask("Telegram chat id")
+        print()
+
+    cfg = {k: v for k, v in cfg.items() if v}
+    if not cfg:
+        print("Nothing configured. Aborted.")
+        return 1
+
+    if args.no_verify:
+        print("Skipping the test message (--no-verify).")
+    else:
+        print("Sending one test message to each channel...")
+        results = setup_mod.verify(cfg)
+        if not results:
+            print("No usable channel found — a bot token needs a channel id, and vice versa.")
+            return 1
+        for channel, (ok, detail) in results.items():
+            print(f"  {channel:<9} {'OK' if ok else 'FAIL':<5} {detail[:110]}")
+        if not all(ok for ok, _ in results.values()):
+            print("\nNot saving: at least one channel failed. Fix it and rerun.")
+            return 1
+
+    path = setup_mod.write_config(cfg, args.notify_config)
+    print(f"\nSaved to {path} (mode 600).")
+    print("Next: ./sc-api watch --balance 25000 --once --notify --quiet")
+    return 0
+
+
 def cmd_notify_test(args) -> int:
     """Send one reminder with the current numbers, ignoring thresholds."""
     client = _client(args)
@@ -149,6 +204,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ticks", type=int, default=0, metavar="N", help="stop after N ticks (0 = forever)")
     p.add_argument("--state", metavar="PATH", help="reminder state file (default ~/.local/state/sinarcloud/state.json)")
     p.set_defaults(func=cmd_watch)
+
+    p = sub.add_parser("setup", help="find or enter Discord/Telegram credentials, verify, save")
+    p.add_argument("--detect", action="store_true", help="reuse credentials already on this machine")
+    p.add_argument("--no-verify", action="store_true", help="skip the test message")
+    p.add_argument("--notify-config", metavar="PATH", help="where to write (default ~/.config/sinarcloud/notify.json)")
+    p.set_defaults(func=cmd_setup)
 
     p = sub.add_parser("notify-test", help="send one reminder now, ignoring thresholds")
     p.add_argument("--balance", type=float, default=0, metavar="AMOUNT", help="value to show as the threshold")

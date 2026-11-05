@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 
@@ -51,21 +52,33 @@ def load_config(path: str | None = None) -> dict:
     }
 
 
-def _post(url: str, payload: dict, headers: dict | None = None) -> tuple[bool, str]:
+def _post(url: str, payload: dict, headers: dict | None = None, attempts: int = 3) -> tuple[bool, str]:
+    """POST JSON, retrying only on transient network faults.
+
+    A dropped connection is normal on this link (observed: `Connection reset by
+    peer` from api.telegram.org, succeeding on the next try). A 4xx is a real
+    answer — a bad token or a bad webhook — and is never retried.
+    """
     data = json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("User-Agent", "sc-api/1.0")
-    for key, value in (headers or {}).items():
-        req.add_header(key, value)
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            body = resp.read().decode(errors="replace")
-            return 200 <= resp.status < 300, body[:200]
-    except urllib.error.HTTPError as exc:
-        return False, f"HTTP {exc.code}: {exc.read().decode(errors='replace')[:200]}"
-    except urllib.error.URLError as exc:
-        return False, f"unreachable: {exc.reason}"
+    last = "unreachable: unknown error"
+    for attempt in range(1, attempts + 1):
+        req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("User-Agent", "sc-api/1.0")
+        for key, value in (headers or {}).items():
+            req.add_header(key, value)
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+                body = resp.read().decode(errors="replace")
+                return 200 <= resp.status < 300, body[:200]
+        except urllib.error.HTTPError as exc:
+            return False, f"HTTP {exc.code}: {exc.read().decode(errors='replace')[:200]}"
+        except (urllib.error.URLError, OSError) as exc:
+            last = f"unreachable: {getattr(exc, 'reason', exc)}"
+            if attempt < attempts:
+                time.sleep(attempt)  # 1s, then 2s
+                continue
+    return False, last
 
 
 # ---------------------------------------------------------------------------

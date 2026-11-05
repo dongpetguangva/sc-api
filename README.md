@@ -65,6 +65,7 @@ is never sent anywhere except `console-api.sinarcloud.com`.
 | `./sc-api daily` | Per-day requests and tokens |
 | `./sc-api models` | Spend per model |
 | `./sc-api check` | Verify the cookie still works |
+| `./sc-api setup` | Connect Discord/Telegram: detect, test, save |
 | `./sc-api watch …` | Refresh on an interval; fire reminders |
 | `./sc-api notify-test` | Send one reminder now, ignoring thresholds |
 
@@ -115,8 +116,61 @@ half the threshold). When the balance recovers, the flag clears. Without this a
 
 ## Reminders: Discord and Telegram (no LLM)
 
-Two plain HTTP transports. Credentials are read from the environment first, then
-from `~/.config/sinarcloud/notify.json`:
+Two plain HTTP transports. There is no LLM anywhere in this path — the message
+is built from numbers with an f-string.
+
+### One command to connect
+
+```bash
+./sc-api setup --detect
+```
+
+That looks for credentials already on this machine, sends one real test message
+through each channel it finds, and writes `~/.config/sinarcloud/notify.json`
+(mode 600) only if every channel answered OK. Sample:
+
+```
+Found credentials already on this machine:
+  ~/.hermes/.telegram_watchdog: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+  ~/.hermes/.env: DISCORD_BOT_TOKEN, DISCORD_HOME_CHANNEL
+  discord_bot_token    MTAxNz…kQ2F (len 72)
+  discord_channel_id   123456…5678 (len 19)
+  telegram_bot_token   123456…Xy9Z (len 46)
+  telegram_chat_id     123456…7890 (len 10)
+
+Sending one test message to each channel...
+  discord   OK
+  telegram  OK
+
+Saved to ~/.config/sinarcloud/notify.json (mode 600).
+```
+
+Values are always masked — `MTAxNz…kQ2F (len 72)` is enough to recognise which
+credential was picked, never enough to use it.
+
+No credentials on the machine? Run `./sc-api setup` without flags and paste them
+in; blank fields are skipped.
+
+### Getting the credentials
+
+**Discord — webhook (simplest)**
+
+Server Settings → Integrations → Webhooks → New Webhook → pick a channel →
+Copy Webhook URL.
+
+**Discord — bot token (no webhook needed)**
+
+If a bot is already in your server: copy its token and the target channel id
+(right-click the channel → Copy Channel ID, with Developer Mode on).
+
+**Telegram**
+
+Message [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token. Send
+your bot a message once, then open
+`https://api.telegram.org/bot<TOKEN>/getUpdates` and read `chat.id`. A group id
+starts with `-`.
+
+### notify.json
 
 ```json
 {
@@ -126,9 +180,8 @@ from `~/.config/sinarcloud/notify.json`:
 }
 ```
 
-Discord accepts either a **webhook URL** or a **bot token plus channel id** —
-useful when a bot is already in your server and you would rather not create a
-webhook:
+Or Discord through a bot instead of a webhook — the webhook wins if both are
+present:
 
 ```json
 {
@@ -137,15 +190,14 @@ webhook:
 }
 ```
 
-The webhook wins if both are present.
-
 ```bash
 chmod 600 ~/.config/sinarcloud/notify.json
 ./sc-api notify-test          # prove both channels work
 ```
 
 Environment variables override the file:
-`SINAR_DISCORD_WEBHOOK`, `SINAR_TELEGRAM_BOT_TOKEN`, `SINAR_TELEGRAM_CHAT_ID`.
+`SINAR_DISCORD_WEBHOOK`, `SINAR_DISCORD_BOT_TOKEN`, `SINAR_DISCORD_CHANNEL_ID`,
+`SINAR_TELEGRAM_BOT_TOKEN`, `SINAR_TELEGRAM_CHAT_ID`.
 
 **Discord** receives a rich embed: title, colour by severity, balance, threshold,
 runway, average daily spend, and a top-up link. **Telegram** receives HTML text
@@ -243,9 +295,11 @@ scapi/
   client.py            HTTP transport, one method per endpoint
   models.py            dataclasses: Wallet, Totals, Forecast, Snapshot, …
   report.py            build Snapshot, render summary/daily/models
-  notify.py            Discord embed + Telegram message, fan-out
+  notify.py            Discord webhook/bot + Telegram, retry, fan-out
+  setup.py             discover credentials, verify, write notify.json
   watch.py             interval loop, threshold evaluation, dedupe state
 import_cookie.py       extract Cookie header from bash/macOS/Windows cURL
+tests/test_notify.py   offline assertions on payloads and thresholds
 tests/mock_server.py   local webhook recorder for offline testing
 ```
 
