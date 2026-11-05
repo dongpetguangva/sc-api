@@ -220,14 +220,23 @@ def cmd_setup(args) -> int:
 
 
 def cmd_notify_test(args) -> int:
-    """Send one reminder with the current numbers, ignoring thresholds."""
+    """Send one reminder now, ignoring whether the threshold is breached.
+
+    The number shown in the message is the real configured threshold unless
+    --balance overrides it for this run, so the test message looks exactly like
+    a genuine alert.
+    """
     client = _client(args)
     snap = build_snapshot(client, days=args.days, with_credits=False)
     cfg = load_config(getattr(args, "notify_config", None))
+    threshold = args.balance if args.balance is not None else (cfg.get("threshold") or 0)
+    channel = args.channel if args.channel is not None else cfg.get("channel")
+    if channel:
+        cfg["discord_channel_id"] = channel
     results = notify_all(
         balance=snap.balance,
         currency=snap.currency,
-        threshold=args.balance or 0,
+        threshold=threshold,
         runway_days=snap.runway_days,
         average_daily=snap.forecast.average_daily.amount,
         severity="info",
@@ -335,7 +344,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_setup)
 
     p = sub.add_parser("notify-test", help="send one reminder now, ignoring thresholds")
-    p.add_argument("--balance", type=float, default=0, metavar="AMOUNT", help="value to show as the threshold")
+    p.add_argument("--balance", type=float, default=None, metavar="AMOUNT", help="override the threshold shown (default: configured threshold)")
+    p.add_argument("--channel", metavar="NAME", help="Discord channel by name (default: from config)")
     p.add_argument("--notify-config", metavar="PATH", help="path to notify.json")
     p.set_defaults(func=cmd_notify_test)
 
