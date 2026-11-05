@@ -72,7 +72,7 @@ is never sent anywhere except `console-api.sinarcloud.com`.
 | `./sc-api cron remove` | Delete the cron reminder |
 | `./sc-api setup` | Connect Discord/Telegram: detect, test, save |
 | `./sc-api watch …` | Refresh on an interval; fire reminders |
-| `./sc-api notify-test` | Send one reminder now, ignoring thresholds |
+| `./sc-api notify-test` | Send one reminder now, ignoring thresholds (shows the real configured threshold) |
 
 Global options: `--days {7,30}`, `--cookie PATH`, `--runway DAYS`, `--version`.
 
