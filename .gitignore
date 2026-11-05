@@ -1,0 +1,16 @@
+# kredensial — jangan pernah di-commit
+cookies.txt
+*.cookie
+.env
+.env.*
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# editor / os
+.DS_Store
+.vscode/
+.idea/
