@@ -162,6 +162,7 @@ def cmd_watch(args) -> int:
         quiet=args.quiet,
         max_ticks=args.ticks,
         state_path=args.state or WatchConfig().state_path,
+        channel=args.channel,
     )
     return run_watch(client, cfg)
 
@@ -196,6 +197,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("watch", help="refresh on an interval and fire reminders")
     p.add_argument("--interval", type=float, default=60, metavar="SEC", help="seconds between refreshes (default 60)")
     p.add_argument("--balance", type=float, metavar="AMOUNT", help="remind when balance drops below AMOUNT")
+    p.add_argument("--channel", metavar="NAME", help="Discord channel by name, e.g. uptime (overrides config)")
     p.add_argument("--runway", type=float, metavar="DAYS", help="remind when runway drops below DAYS")
     p.add_argument("--notify", action="store_true", help="actually send Discord/Telegram reminders")
     p.add_argument("--once", action="store_true", help="single evaluation (use this in cron)")

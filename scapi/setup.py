@@ -34,6 +34,7 @@ _SOURCES = [
     ("~/.hermes/.env", {
         "DISCORD_BOT_TOKEN": "discord_bot_token",
         "DISCORD_HOME_CHANNEL": "discord_channel_id",
+        "DISCORD_ALLOWED_USERS": "discord_dm_user_id",
         "TELEGRAM_BOT_TOKEN": "telegram_bot_token",
         "TELEGRAM_HOME_CHANNEL": "telegram_chat_id",
     }),
@@ -107,6 +108,7 @@ def describe(found: dict, sources: dict) -> list[str]:
         "discord_webhook",
         "discord_bot_token",
         "discord_channel_id",
+        "discord_dm_user_id",
         "telegram_bot_token",
         "telegram_chat_id",
     ):
@@ -116,30 +118,17 @@ def describe(found: dict, sources: dict) -> list[str]:
 
 
 def verify(cfg: dict, *, quiet: bool = True) -> dict[str, tuple[bool, str]]:
-    """Send one real message per configured channel."""
-    results: dict[str, tuple[bool, str]] = {}
-    embed = build_discord_embed(
+    """Send one real message to every configured target."""
+    from .notify import notify_all
+
+    return notify_all(
         balance=0,
         currency="IDR",
         threshold=0,
         severity="info",
+        config=cfg,
         title="sc-api connected",
     )
-    text = build_telegram_text(
-        balance=0, currency="IDR", threshold=0, severity="info"
-    ).replace("SinarCloud balance low", "sc-api connected")
-
-    if cfg.get("discord_webhook"):
-        results["discord"] = send_discord(cfg["discord_webhook"], embed)
-    elif cfg.get("discord_bot_token") and cfg.get("discord_channel_id"):
-        results["discord"] = send_discord_bot(
-            cfg["discord_bot_token"], cfg["discord_channel_id"], embed
-        )
-    if cfg.get("telegram_bot_token") and cfg.get("telegram_chat_id"):
-        results["telegram"] = send_telegram(
-            cfg["telegram_bot_token"], cfg["telegram_chat_id"], text
-        )
-    return results
 
 
 def write_config(cfg: dict, path: str | None = None) -> str:

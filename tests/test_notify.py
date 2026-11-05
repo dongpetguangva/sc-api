@@ -46,16 +46,18 @@ def test_discord_embed_severity_colours() -> None:
     check("title carries severity icon", "⚠️" in warn["embeds"][0]["title"], warn["embeds"][0]["title"])
 
     fields = {f["name"]: f["value"] for f in warn["embeds"][0]["fields"]}
-    check("balance field", fields.get("Balance") == "**IDR 1,000**", str(fields.get("Balance")))
-    check("threshold field", fields.get("Threshold") == "IDR 2,000", str(fields.get("Threshold")))
+    check("balance field in code", fields.get("Balance") == "`IDR 1,000`", str(fields.get("Balance")))
+    check("threshold field in code", fields.get("Threshold") == "`IDR 2,000`", str(fields.get("Threshold")))
     check("no runway field when unknown", "Runway" not in fields)
+    check("footer has a timestamp", "·" in warn["embeds"][0]["footer"]["text"], warn["embeds"][0]["footer"]["text"])
+    check("embed carries an ISO timestamp", "T" in warn["embeds"][0].get("timestamp", ""), str(warn["embeds"][0].get("timestamp")))
 
     withrun = build_discord_embed(
         balance=1000, currency="IDR", threshold=2000, runway_days=5.44, average_daily=250
     )
     f2 = {f["name"]: f["value"] for f in withrun["embeds"][0]["fields"]}
-    check("runway formatted to 1dp", f2.get("Runway") == "5.4 days", str(f2.get("Runway")))
-    check("average spend field", f2.get("Average spend") == "IDR 250/day", str(f2.get("Average spend")))
+    check("runway formatted to 1dp", f2.get("Runway") == "`5.4 days`", str(f2.get("Runway")))
+    check("average spend field", f2.get("Average spend") == "`IDR 250/day`", str(f2.get("Average spend")))
 
     check("payload is JSON serialisable", bool(json.dumps(warn)))
 
@@ -66,9 +68,11 @@ def test_telegram_text() -> None:
         balance=1000, currency="IDR", threshold=2000, runway_days=5.4, average_daily=250
     )
     check("bold header", "<b>SinarCloud balance low</b>" in text)
+    check("timestamp line", "<i>" in text and "</i>" in text)
+    check("monospace table", "<pre>" in text and "</pre>" in text)
     check("balance present", "IDR 1,000" in text)
     check("runway present", "5.4 days" in text)
-    check("no unescaped ampersand in tags", "&lt;" not in text or True)
+    check("labels aligned in table", "Balance " in text and "Threshold " in text)
     check("top-up link", 'href="https://console.sinarcloud.com/billing/top-up"' in text)
 
 

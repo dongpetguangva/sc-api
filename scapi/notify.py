@@ -21,6 +21,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 CONFIG_PATH = os.path.expanduser("~/.config/sinarcloud/notify.json")
 TIMEOUT = 20
@@ -47,6 +48,7 @@ def load_config(path: str | None = None) -> dict:
         "discord_webhook": os.environ.get("SINAR_DISCORD_WEBHOOK") or cfg.get("discord_webhook"),
         "discord_bot_token": os.environ.get("SINAR_DISCORD_BOT_TOKEN") or cfg.get("discord_bot_token"),
         "discord_channel_id": os.environ.get("SINAR_DISCORD_CHANNEL_ID") or cfg.get("discord_channel_id"),
+        "discord_dm_user_id": os.environ.get("SINAR_DISCORD_DM_USER_ID") or cfg.get("discord_dm_user_id"),
         "telegram_bot_token": os.environ.get("SINAR_TELEGRAM_BOT_TOKEN") or cfg.get("telegram_bot_token"),
         "telegram_chat_id": os.environ.get("SINAR_TELEGRAM_CHAT_ID") or cfg.get("telegram_chat_id"),
     }
@@ -84,6 +86,11 @@ def _post(url: str, payload: dict, headers: dict | None = None, attempts: int = 
 # ---------------------------------------------------------------------------
 # Discord
 # ---------------------------------------------------------------------------
+def _now_local() -> str:
+    """Local timestamp, e.g. `05 Nov 21:26`. Timezone follows the machine."""
+    return datetime.now().astimezone().strftime("%d %b %H:%M")
+
+
 def build_discord_embed(
     *,
     balance: float,
@@ -95,15 +102,16 @@ def build_discord_embed(
     title: str = "SinarCloud balance low",
 ) -> dict:
     icon, colour = _SEVERITY.get(severity, _SEVERITY["warning"])
+    # Values go in inline code so the digits line up in Discord's 2x2 field grid.
     fields = [
-        {"name": "Balance", "value": f"**{currency} {balance:,.0f}**", "inline": True},
-        {"name": "Threshold", "value": f"{currency} {threshold:,.0f}", "inline": True},
+        {"name": "Balance", "value": f"`{currency} {balance:,.0f}`", "inline": True},
+        {"name": "Threshold", "value": f"`{currency} {threshold:,.0f}`", "inline": True},
     ]
     if runway_days is not None:
-        fields.append({"name": "Runway", "value": f"{runway_days:.1f} days", "inline": True})
+        fields.append({"name": "Runway", "value": f"`{runway_days:.1f} days`", "inline": True})
     if average_daily:
         fields.append(
-            {"name": "Average spend", "value": f"{currency} {average_daily:,.0f}/day", "inline": True}
+            {"name": "Average spend", "value": f"`{currency} {average_daily:,.0f}/day`", "inline": True}
         )
     return {
         "embeds": [
@@ -112,7 +120,8 @@ def build_discord_embed(
                 "description": "Your SinarCloud credit is below the configured threshold.",
                 "color": colour,
                 "fields": fields,
-                "footer": {"text": "sc-api · read-only monitor"},
+                "footer": {"text": f"sc-api · read-only monitor · {_now_local()}"},
+                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "url": "https://console.sinarcloud.com/billing/top-up",
             }
         ]
@@ -133,6 +142,86 @@ def _tg_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def send_discord_dm(bot_token: str, user_id: str, embed_payload: dict) -> tuple[bool, str]:
+    """Open (or reuse) a DM channel with a user, then post the embed into it."""
+    url = "https://discord.com/api/v10/users/@me/channels"
+    data = json.dumps({"recipient_id": user_id}).encode()
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("User-Agent", "sc-api/1.0")
+    req.add_header("Authorization", f"Bot {bot_token}")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            channel_id = json.load(resp)["id"]
+    except urllib.error.HTTPError as exc:
+        return False, f"HTTP {exc.code}: {exc.read().decode(errors='replace')[:160]}"
+    except (urllib.error.URLError, OSError) as exc:
+        return False, f"unreachable: {getattr(exc, 'reason', exc)}"
+    return send_discord_bot(bot_token, channel_id, embed_payload)
+
+
+def _tg_call(bot_token: str, method: str, params: dict) -> tuple[bool, str, dict | None]:
+    base = os.environ.get("SINAR_TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
+    url = f"{base}/bot{bot_token}/{method}"
+    body = json.dumps(params).encode()
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("User-Agent", "sc-api/1.0")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            doc = json.load(resp)
+            return True, "ok", doc
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")[:200]
+        return False, f"HTTP {exc.code}: {detail}", None
+    except (urllib.error.URLError, OSError) as exc:
+        return False, f"unreachable: {getattr(exc, 'reason', exc)}", None
+
+
+def resolve_discord_channel(bot_token: str, name: str) -> tuple[str | None, str]:
+    """Find a text channel by name across the bot's guilds. Returns (id, detail).
+
+    Lets config say `"uptime"` instead of a 19-digit snowflake, which is easier
+    to write and survives a channel being recreated with a new id only if the
+    name stays the same.
+    """
+    try:
+        req = urllib.request.Request(
+            "https://discord.com/api/v10/users/@me/guilds",
+            headers={"Authorization": f"Bot {bot_token}", "User-Agent": "sc-api/1.0"},
+        )
+        guilds = json.load(urllib.request.urlopen(req, timeout=TIMEOUT))
+        for guild in guilds:
+            req = urllib.request.Request(
+                f"https://discord.com/api/v10/guilds/{guild['id']}/channels",
+                headers={"Authorization": f"Bot {bot_token}", "User-Agent": "sc-api/1.0"},
+            )
+            for channel in json.load(urllib.request.urlopen(req, timeout=TIMEOUT)):
+                if channel.get("name") == name and channel.get("type") == 0:
+                    return channel["id"], f"{guild['name']}#{name}"
+    except urllib.error.HTTPError as exc:
+        return None, f"HTTP {exc.code} while listing channels"
+    except (urllib.error.URLError, OSError) as exc:
+        return None, f"unreachable: {getattr(exc, 'reason', exc)}"
+    return None, f"no text channel named {name!r} found"
+
+
+def send_telegram(bot_token: str, chat_id: str, text: str) -> tuple[bool, str]:
+    ok, detail, doc = _tg_call(
+        bot_token,
+        "sendMessage",
+        {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        },
+    )
+    if ok and doc is not None:
+        return True, json.dumps({"ok": True, "id": doc.get("result", {}).get("message_id")})
+    return ok, detail
+
+
 def build_telegram_text(
     *,
     balance: float,
@@ -141,19 +230,26 @@ def build_telegram_text(
     runway_days: float | None = None,
     average_daily: float | None = None,
     severity: str = "warning",
+    title: str = "SinarCloud balance low",
 ) -> str:
     icon, _ = _SEVERITY.get(severity, _SEVERITY["warning"])
-    lines = [
-        f"{icon} <b>SinarCloud balance low</b>",
-        "",
-        f"Balance: <b>{currency} {balance:,.0f}</b>",
-        f"Threshold: {currency} {threshold:,.0f}",
-    ]
+    # Monospace block keeps the labels and the numbers in two aligned columns.
+    rows = [("Balance", f"{currency} {balance:,.0f}"), ("Threshold", f"{currency} {threshold:,.0f}")]
     if runway_days is not None:
-        lines.append(f"Runway: {runway_days:.1f} days")
+        rows.append(("Runway", f"{runway_days:.1f} days"))
     if average_daily:
-        lines.append(f"Average spend: {currency} {average_daily:,.0f}/day")
-    lines += ["", '<a href="https://console.sinarcloud.com/billing/top-up">Top up</a>']
+        rows.append(("Avg spend", f"{currency} {average_daily:,.0f}/day"))
+    width = max(len(label) for label, _ in rows)
+    table = "\n".join(f"{label:<{width}}  {value}" for label, value in rows)
+
+    lines = [
+        f"{icon} <b>{_tg_escape(title)}</b>",
+        f"<i>{_now_local()}</i>",
+        "",
+        f"<pre>{table}</pre>",
+        "",
+        '<a href="https://console.sinarcloud.com/billing/top-up">Top up</a>',
+    ]
     return "\n".join(lines)
 
 
@@ -193,11 +289,17 @@ def notify_all(
     average_daily: float | None = None,
     severity: str = "warning",
     config: dict | None = None,
+    title: str = "SinarCloud balance low",
 ) -> dict[str, tuple[bool, str]]:
-    """Send the same reminder to every configured channel.
+    """Send the same reminder to every configured target.
 
-    Returns {channel: (ok, detail)}. A channel with no credential is skipped,
-    not reported as failure, so a Telegram-only setup does not look broken.
+    Targets are independent, so one broken channel never suppresses the others:
+
+      * `discord:<channel>`  — a guild channel, by id or by name
+      * `discord:dm`         — a direct message to one user
+      * `telegram`           — a chat id (a private chat id *is* a DM)
+
+    Returns {target: (ok, detail)}.
     """
     cfg = config if config is not None else load_config()
     results: dict[str, tuple[bool, str]] = {}
@@ -209,30 +311,42 @@ def notify_all(
         runway_days=runway_days,
         average_daily=average_daily,
         severity=severity,
+        title=title,
+    )
+    text = build_telegram_text(
+        balance=balance,
+        currency=currency,
+        threshold=threshold,
+        runway_days=runway_days,
+        average_daily=average_daily,
+        severity=severity,
+        title=title,
     )
 
-    # Webhook and bot token are interchangeable transports: prefer whichever
-    # is configured. A webhook needs no bot in the guild; a bot token needs no
-    # webhook to be created by hand.
+    # -- Discord --------------------------------------------------------
+    token = cfg.get("discord_bot_token")
     if cfg.get("discord_webhook"):
-        results["discord"] = send_discord(cfg["discord_webhook"], embed)
-    elif cfg.get("discord_bot_token") and cfg.get("discord_channel_id"):
-        results["discord"] = send_discord_bot(
-            cfg["discord_bot_token"], cfg["discord_channel_id"], embed
-        )
-    else:
+        results["discord:webhook"] = send_discord(cfg["discord_webhook"], embed)
+
+    if token:
+        target = cfg.get("discord_channel_id")
+        if target:
+            channel_id, where = (target, target) if str(target).isdigit() else resolve_discord_channel(token, target)
+            if channel_id:
+                results[f"discord:{target}"] = send_discord_bot(token, channel_id, embed)
+            else:
+                results[f"discord:{target}"] = (False, where)
+        if cfg.get("discord_dm_user_id"):
+            results["discord:dm"] = send_discord_dm(token, cfg["discord_dm_user_id"], embed)
+
+    if not any(key.startswith("discord") for key in results):
         results["discord"] = (False, "skipped: no discord_webhook or discord_bot_token+channel_id")
 
+    # -- Telegram -------------------------------------------------------
     if cfg.get("telegram_bot_token") and cfg.get("telegram_chat_id"):
-        text = build_telegram_text(
-            balance=balance,
-            currency=currency,
-            threshold=threshold,
-            runway_days=runway_days,
-            average_daily=average_daily,
-            severity=severity,
+        results["telegram"] = send_telegram(
+            cfg["telegram_bot_token"], cfg["telegram_chat_id"], text
         )
-        results["telegram"] = send_telegram(cfg["telegram_bot_token"], cfg["telegram_chat_id"], text)
     else:
         results["telegram"] = (False, "skipped: no telegram_bot_token/chat_id configured")
 

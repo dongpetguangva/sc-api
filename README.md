@@ -97,6 +97,7 @@ stay running — `--once` turns it into a single evaluation for cron.
 |---|---|
 | `--interval SEC` | Seconds between refreshes (default `60`) |
 | `--balance AMOUNT` | Breach when balance is below `AMOUNT` |
+| `--channel NAME` | Discord channel by name for this run (overrides config) |
 | `--runway DAYS` | Breach when projected runway is below `DAYS` |
 | `--notify` | Actually send to Discord/Telegram (off by default) |
 | `--once` | One evaluation, then exit |
@@ -174,20 +175,24 @@ starts with `-`.
 
 ```json
 {
-  "discord_webhook": "https://discord.com/api/webhooks/...",
+  "discord_bot_token": "MTU1...",
+  "discord_channel_id": "uptime",
+  "discord_dm_user_id": "123456789012345678",
   "telegram_bot_token": "123456:ABC-DEF...",
   "telegram_chat_id": "123456789"
 }
 ```
 
-Or Discord through a bot instead of a webhook — the webhook wins if both are
-present:
+`discord_channel_id` accepts either a snowflake or a **channel name** — the bot
+looks the name up in its guilds at send time, so `"uptime"` is enough. Keep both
+`discord_channel_id` and `discord_dm_user_id` to post in the channel *and* send a
+direct message; each target is attempted independently, so one failing does not
+block the others.
+
+A webhook can be used instead of a bot token:
 
 ```json
-{
-  "discord_bot_token": "MTU1...",
-  "discord_channel_id": "123456789012345678"
-}
+{ "discord_webhook": "https://discord.com/api/webhooks/..." }
 ```
 
 ```bash
@@ -197,18 +202,48 @@ chmod 600 ~/.config/sinarcloud/notify.json
 
 Environment variables override the file:
 `SINAR_DISCORD_WEBHOOK`, `SINAR_DISCORD_BOT_TOKEN`, `SINAR_DISCORD_CHANNEL_ID`,
-`SINAR_TELEGRAM_BOT_TOKEN`, `SINAR_TELEGRAM_CHAT_ID`.
+`SINAR_DISCORD_DM_USER_ID`, `SINAR_TELEGRAM_BOT_TOKEN`, `SINAR_TELEGRAM_CHAT_ID`.
 
-**Discord** receives a rich embed: title, colour by severity, balance, threshold,
-runway, average daily spend, and a top-up link. **Telegram** receives HTML text
-through `sendMessage`. A channel with no credential is reported as `skipped`, so
-a Telegram-only setup does not look broken.
+### What the messages look like
+
+Discord — one embed, colour by severity, values in monospace so the 2×2 field
+grid lines up, footer and native timestamp:
+
+```
+🚨 SinarCloud balance low
+Your SinarCloud credit is below the configured threshold.
+──────────────────────────────────────────────
+Balance             Threshold
+IDR 15,814          IDR 500
+Runway              Average spend
+4.8 days            IDR 3,277/day
+──────────────────────────────────────────────
+sc-api · read-only monitor · 05 Nov 21:43
+```
+
+Telegram — the same numbers as an aligned monospace block:
+
+```
+🚨 SinarCloud balance low
+05 Nov 21:43
+
+Balance    IDR 15,814
+Threshold  IDR 500
+Runway     4.8 days
+Avg spend  IDR 3,277/day
+
+Top up
+```
+
+Discord posts through the Bot API (`POST /channels/{id}/messages`) or a webhook;
+Telegram through `sendMessage`. A target with no credential is reported as
+`skipped`, so a Telegram-only setup does not look broken.
 
 ### Cron examples
 
 ```bash
 # every 30 minutes: evaluate once, speak only on a breach
-*/30 * * * * cd ~/sc-api && ./sc-api watch --balance 25000 --once --notify --quiet
+*/30 * * * * cd ~/sc-api && ./sc-api watch --balance 500 --channel uptime --once --notify --quiet
 
 # daily at 07:00: append a summary to a log
 0 7 * * * cd ~/sc-api && ./sc-api >> ~/.local/state/sinar-usage.log 2>&1

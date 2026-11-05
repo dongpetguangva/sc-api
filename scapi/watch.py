@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 from .client import AuthError, Client
 from .models import Snapshot
-from .notify import notify_all
+from .notify import load_config, notify_all
 from .report import build_snapshot, format_summary
 
 DEFAULT_STATE = os.path.expanduser("~/.local/state/sinarcloud/state.json")
@@ -39,6 +39,7 @@ class WatchConfig:
     quiet: bool = False               # no terminal output, only notifications
     state_path: str = DEFAULT_STATE
     max_ticks: int = 0                # 0 = forever
+    channel: str | None = None        # Discord channel by name, overrides config
 
 
 @dataclass
@@ -151,6 +152,9 @@ def run(client: Client, cfg: WatchConfig) -> int:
             to_send = fresh + escalations
             if to_send:
                 lead = to_send[0]
+                cfg_notify = load_config()
+                if cfg.channel:
+                    cfg_notify["discord_channel_id"] = cfg.channel
                 results = notify_all(
                     balance=snap.balance,
                     currency=snap.currency,
@@ -158,6 +162,7 @@ def run(client: Client, cfg: WatchConfig) -> int:
                     runway_days=snap.runway_days,
                     average_daily=snap.forecast.average_daily.amount,
                     severity=lead["severity"],
+                    config=cfg_notify,
                 )
                 state.last_fired = time.time()
                 for kind in {b["kind"] for b in to_send}:
